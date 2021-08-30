@@ -19,3 +19,15 @@ sudo tcpdump -i eth0 -n -s 120 -w core-fluentbit-1.8.3v1.pcap not port 22
 scp -i "raykeypair.pem" ec2-user@ec2-35-84-194-209.us-west-2.compute.amazonaws.com:/home/ec2-user/core-fluentbit-1.8.3v3.pcap .
 
 data/perf-test/runtest.sh > data/perf-test/logFolder-fb/test.log
+
+
+Run FluentBit default image: v1.6.8 
+
+*Debug:*
+docker run --rm -v $(pwd):/fluent-bit/etc/ -v $HOME:/home -e "HOME=/home" -e="FLB_LOG_LEVEL=debug" --mount type=bind,source=/home/ec2-user/fluent-bit-performance-test/data/perf-test/fluent-bit.conf,destination=/fluent-bit/etc/fluent-bit.conf,readonly --mount type=bind,source=/home/ec2-user/fluent-bit-performance-test/data/perf-test/,destination=/data/perf-test/ fluent/fluent-bit:1.6.8-debug
+
+*Without debug enabled:*
+docker run --rm -v $(pwd):/fluent-bit/etc/ -v $HOME:/home -e "HOME=/home" --mount type=bind,source=/home/ec2-user/fluent-bit-performance-test/data/perf-test/fluent-bit.conf,destination=/fluent-bit/etc/fluent-bit.conf,readonly --mount type=bind,source=/home/ec2-user/fluent-bit-performance-test/data/perf-test/,destination=/data/perf-test/ fluent/fluent-bit:1.6.8-debug
+
+Data generator:
+[ec2-user@ip fluent-bit-performance-test]$ data/perf-test/runtest.sh > data/perf-test/logFolder-fb/test.log
