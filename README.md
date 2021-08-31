@@ -31,3 +31,9 @@ docker run --rm -v $(pwd):/fluent-bit/etc/ -v $HOME:/home -e "HOME=/home" --moun
 
 Data generator:
 [ec2-user@ip fluent-bit-performance-test]$ data/perf-test/runtest.sh > data/perf-test/logFolder-fb/test.log
+
+
+Git Patch/ Diff:
+
+git diff master aws_http_buffer > /home/ec2-user/aws_http_buffer.patch
+git diff branch_1 branch_2 > output_file.patch
