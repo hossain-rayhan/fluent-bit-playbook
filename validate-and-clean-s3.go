@@ -33,9 +33,9 @@ func main() {
 	os.Setenv(envAWSRegion, "us-west-2")
 	os.Setenv(envS3Bucket, "fluent-bit-perf-test")
 	os.Setenv(envS3Prefix, "flb-perf-test")
-	os.Setenv(envTestFile, "/home/ec2-user/fluent-bit/include/data/logFolder-fb/input.log")
-	os.Setenv(envS3Action, "validate")
-	// os.Setenv(envS3Action, "clean")
+	os.Setenv(envTestFile, "/data/flb-test/input.log")
+	// os.Setenv(envS3Action, "validate")
+	os.Setenv(envS3Action, "clean")
 
 	region := os.Getenv(envAWSRegion)
 	if region == "" {
@@ -143,9 +143,6 @@ func validate(s3Client *s3.S3, response *s3.ListObjectsV2Output, bucket string, 
 			if d == "" {
 				continue
 			}
-			if len(d) > 5000 {
-				continue
-			}
 
 			var message Message
 
@@ -164,7 +161,10 @@ func validate(s3Client *s3.S3, response *s3.ListObjectsV2Output, bucket string, 
 				exitErrorf("[TEST FAILURE] Invalid number: %d found. Expected value in range (0 - %d)", number)
 			}
 			s3RecordCounter += 1
-			inputMap[number] = true
+
+			if _, ok := inputMap[number]; ok {
+				inputMap[number] = true
+			}
 		}
 
 	}
@@ -176,7 +176,7 @@ func validate(s3Client *s3.S3, response *s3.ListObjectsV2Output, bucket string, 
 	}
 
 	fmt.Println("Total input record: ", totalInputRecord)
-	fmt.Println("Total record found in S3: ", s3RecordCounter)
+	fmt.Println("Total record in S3: ", s3RecordCounter)
 	fmt.Println("Duplicate records:", (s3RecordCounter - recordFound))
 	if totalInputRecord == recordFound {
 		fmt.Println("[TEST SUCCESSFULL] Found all the log records.")
