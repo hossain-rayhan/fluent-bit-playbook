@@ -33,9 +33,9 @@ func main() {
 	os.Setenv(envAWSRegion, "us-west-2")
 	os.Setenv(envS3Bucket, "fluent-bit-perf-test")
 	os.Setenv(envS3Prefix, "flb-perf-test")
-	os.Setenv(envTestFile, "/data/flb-test/input.log")
-	// os.Setenv(envS3Action, "validate")
-	os.Setenv(envS3Action, "clean")
+	os.Setenv(envTestFile, "/home/ec2-user/fluent-bit-performance-test/data/perf-test/input/test.log")
+	os.Setenv(envS3Action, "validate")
+	// os.Setenv(envS3Action, "clean")
 
 	region := os.Getenv(envAWSRegion)
 	if region == "" {
@@ -74,8 +74,8 @@ func main() {
 	s3Action := os.Getenv(envS3Action)
 	if s3Action == "validate" {
 		// Validate the data on the s3 bucket
-		getS3ObjectsResponse := getS3Objects(s3Client, bucket, prefix)
-		validate(s3Client, getS3ObjectsResponse, bucket, testFile)
+		getS3ObjectsResponses := getS3Objects(s3Client, bucket, prefix)
+		validate(s3Client, getS3ObjectsResponses, bucket, testFile)
 	} else {
 		// Clean the s3 bucket-- delete all objects
 		deleteS3Objects(s3Client, bucket, prefix)
@@ -96,27 +96,43 @@ func getS3Client(region string) (*s3.S3, error) {
 }
 
 // Returns all the objects from a S3 bucket with the given prefix
-func getS3Objects(s3Client *s3.S3, bucket string, prefix string) *s3.ListObjectsV2Output {
-	input := &s3.ListObjectsV2Input{
-		Bucket:  aws.String(bucket),
-		MaxKeys: aws.Int64(100),
-		Prefix:  aws.String(prefix),
+func getS3Objects(s3Client *s3.S3, bucket string, prefix string) []*s3.ListObjectsV2Output {
+	index := 0
+	var continuationToken *string
+
+	var responseList []*s3.ListObjectsV2Output
+	var input *s3.ListObjectsV2Input
+	for {
+		input = &s3.ListObjectsV2Input{
+			Bucket:            aws.String(bucket),
+			ContinuationToken: continuationToken,
+			Prefix:            aws.String(prefix),
+		}
+
+		response, err := s3Client.ListObjectsV2(input)
+
+		if err != nil {
+			exitErrorf("[TEST FAILURE] Error occured to get the objects from bucket: %q., %v", bucket, err)
+		}
+
+		responseList = append(responseList, response)
+		index++
+
+		if !aws.BoolValue(response.IsTruncated) {
+			break
+		}
+		continuationToken = response.NextContinuationToken
 	}
 
-	response, err := s3Client.ListObjectsV2(input)
-
-	if err != nil {
-		exitErrorf("[TEST FAILURE] Error occured to get the objects from bucket: %q., %v", bucket, err)
-	}
-
-	return response
+	return responseList
 }
 
 // Validates the log messages. Our log producer is designed to send 1000 integers [0 - 999].
 // Both of the Kinesis Streams and Kinesis Firehose try to send each log maintaining the "at least once" policy.
 // To validate, we need to make sure all the valid numbers [0 - 999] are stored at least once.
-func validate(s3Client *s3.S3, response *s3.ListObjectsV2Output, bucket string, testFile string) {
+func validate(s3Client *s3.S3, responses []*s3.ListObjectsV2Output, bucket string, testFile string) {
 	s3RecordCounter := 0
+	s3ObjectCounter := 0
 	recordFound := 0
 
 	inputMap, err := readIdsFromFile(testFile)
@@ -125,48 +141,52 @@ func validate(s3Client *s3.S3, response *s3.ListObjectsV2Output, bucket string, 
 	}
 	totalInputRecord := len(inputMap)
 
-	for i := range response.Contents {
-		input := &s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    response.Contents[i].Key,
+	for _, response := range responses {
+		for i := range response.Contents {
+			input := &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    response.Contents[i].Key,
+			}
+			obj := getS3Object(s3Client, input)
+			s3ObjectCounter++
+
+			dataByte, err := ioutil.ReadAll(obj.Body)
+			if err != nil {
+				exitErrorf("[TEST FAILURE] Error to parse GetObject response. %v", err)
+			}
+
+			data := strings.Split(string(dataByte), "\n")
+
+			for _, d := range data {
+				if d == "" {
+					continue
+				}
+
+				var message Message
+
+				decodeError := json.Unmarshal([]byte(d), &message)
+				if decodeError != nil {
+					exitErrorf("[TEST FAILURE] Json Unmarshal Error:", decodeError)
+				}
+
+				// fmt.Println(message)
+				id := message.Log[:8]
+				number, convertionError := strconv.Atoi(id)
+				if convertionError != nil {
+					exitErrorf("[TEST FAILURE] String to Int convertion Error:", convertionError)
+				}
+
+				if number < 0 {
+					exitErrorf("[TEST FAILURE] Invalid number: %d found. Expected value in range (0 - %d)", number)
+				}
+				s3RecordCounter += 1
+
+				if _, ok := inputMap[number]; ok {
+					inputMap[number] = true
+				}
+			}
+
 		}
-		obj := getS3Object(s3Client, input)
-
-		dataByte, err := ioutil.ReadAll(obj.Body)
-		if err != nil {
-			exitErrorf("[TEST FAILURE] Error to parse GetObject response. %v", err)
-		}
-
-		data := strings.Split(string(dataByte), "\n")
-
-		for _, d := range data {
-			if d == "" {
-				continue
-			}
-
-			var message Message
-
-			decodeError := json.Unmarshal([]byte(d), &message)
-			if decodeError != nil {
-				exitErrorf("[TEST FAILURE] Json Unmarshal Error:", decodeError)
-			}
-
-			id := message.Log[:7]
-			number, convertionError := strconv.Atoi(id)
-			if convertionError != nil {
-				exitErrorf("[TEST FAILURE] String to Int convertion Error:", convertionError)
-			}
-
-			if number < 0 {
-				exitErrorf("[TEST FAILURE] Invalid number: %d found. Expected value in range (0 - %d)", number)
-			}
-			s3RecordCounter += 1
-
-			if _, ok := inputMap[number]; ok {
-				inputMap[number] = true
-			}
-		}
-
 	}
 
 	for _, v := range inputMap {
@@ -176,6 +196,7 @@ func validate(s3Client *s3.S3, response *s3.ListObjectsV2Output, bucket string, 
 	}
 
 	fmt.Println("Total input record: ", totalInputRecord)
+	fmt.Println("Total object in S3: ", s3ObjectCounter)
 	fmt.Println("Total record in S3: ", s3RecordCounter)
 	fmt.Println("Duplicate records:", (s3RecordCounter - recordFound))
 	if totalInputRecord == recordFound {
@@ -239,7 +260,7 @@ func readIdsFromFile(fileName string) (map[int]bool, error) {
 			return inputMap, err
 		}
 
-		line = line[:7]
+		line = line[:8]
 		number, convertionError := strconv.Atoi(line)
 		if convertionError != nil {
 			exitErrorf("[TEST FAILURE] String to Int convertion Error:", convertionError)
